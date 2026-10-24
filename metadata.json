@@ -1,0 +1,6 @@
+{
+  "name": "DocuRAG Studio",
+  "description": "Production-grade RAG chatbot with automated real-time PDF ingestion, vector indexing, and administrative persona controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
