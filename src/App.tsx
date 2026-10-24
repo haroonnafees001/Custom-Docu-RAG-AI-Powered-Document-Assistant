@@ -10,6 +10,8 @@ import { DocumentManagerTab } from './components/DocumentManagerTab.tsx';
 import { SettingsTab } from './components/SettingsTab.tsx';
 import { VectorInspectorTab } from './components/VectorInspectorTab.tsx';
 import { CitationModal } from './components/CitationModal.tsx';
+import { ProcessingModal } from './components/ProcessingModal.tsx';
+import { ConfirmationModal } from './components/ConfirmationModal.tsx';
 import {
   DocumentRecord,
   DocumentChunk,
@@ -31,11 +33,14 @@ import {
   queryRagChatbot,
 } from './utils/vector-store.ts';
 
+import { get, set, del, clear } from 'idb-keyval';
+
 const STORAGE_KEYS = {
   DOCS: 'docurag_documents_v1',
   CHUNKS: 'docurag_chunks_v1',
   SETTINGS: 'docurag_settings_v1',
   MESSAGES: 'docurag_messages_v1',
+  MIGRATED: 'docurag_migrated_to_idb_v1',
 };
 
 export default function App() {
@@ -46,68 +51,112 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeCitation, setActiveCitation] = useState<CitationItem | null>(null);
 
+  // Tracking if initial load from IDB is finished to prevent overwriting with empty state
+  const isInitialLoadComplete = useRef(false);
+
   // Ingestion & Query State
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
   const [isAnswering, setIsAnswering] = useState(false);
   const [selectedDocFilter, setSelectedDocFilter] = useState<string | null>(null);
+  const [chatDocumentFilter, setChatDocumentFilter] = useState<string | null>(null);
+
+  // Confirmation Modal State
+  const [confirmation, setConfirmation] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    confirmVariant: 'danger' | 'primary';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirm',
+    confirmVariant: 'primary',
+    onConfirm: () => {},
+  });
 
   // Hidden file input trigger for header upload button
   const headerFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load persisted state or bootstrap with starter document
+  // Load persisted state from IndexedDB
   useEffect(() => {
-    try {
-      const savedDocs = localStorage.getItem(STORAGE_KEYS.DOCS);
-      const savedChunks = localStorage.getItem(STORAGE_KEYS.CHUNKS);
-      const savedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      const savedMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
+    const initStorage = async () => {
+      try {
+        // 1. Check for migration from localStorage
+        const hasMigrated = localStorage.getItem(STORAGE_KEYS.MIGRATED);
+        if (!hasMigrated) {
+          console.log('Starting migration to IndexedDB...');
+          const legacyDocs = localStorage.getItem(STORAGE_KEYS.DOCS);
+          const legacyChunks = localStorage.getItem(STORAGE_KEYS.CHUNKS);
+          const legacySettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+          const legacyMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
 
-      if (savedSettings) {
-        setSettings(JSON.parse(savedSettings));
-      }
+          if (legacyDocs) await set(STORAGE_KEYS.DOCS, JSON.parse(legacyDocs));
+          if (legacyChunks) await set(STORAGE_KEYS.CHUNKS, JSON.parse(legacyChunks));
+          if (legacySettings) await set(STORAGE_KEYS.SETTINGS, JSON.parse(legacySettings));
+          if (legacyMessages) await set(STORAGE_KEYS.MESSAGES, JSON.parse(legacyMessages));
 
-      if (savedMessages) {
-        setMessages(JSON.parse(savedMessages));
-      }
-
-      if (savedDocs && savedChunks) {
-        const parsedDocs = JSON.parse(savedDocs);
-        const parsedChunks = JSON.parse(savedChunks);
-        if (parsedDocs.length > 0) {
-          setDocuments(parsedDocs);
-          setChunks(parsedChunks);
-          return;
+          localStorage.setItem(STORAGE_KEYS.MIGRATED, 'true');
+          localStorage.removeItem(STORAGE_KEYS.DOCS);
+          localStorage.removeItem(STORAGE_KEYS.CHUNKS);
         }
-      }
 
-      // Bootstrap with starter document
-      bootstrapStarterDocument();
-    } catch (e) {
-      console.error('Failed to load local storage state:', e);
-      bootstrapStarterDocument();
-    }
+        // 2. Load from IDB
+        const [savedDocs, savedChunks, savedSettings, savedMessages] = await Promise.all([
+          get(STORAGE_KEYS.DOCS),
+          get(STORAGE_KEYS.CHUNKS),
+          get(STORAGE_KEYS.SETTINGS),
+          get(STORAGE_KEYS.MESSAGES),
+        ]);
+
+        if (savedSettings) setSettings(savedSettings);
+        if (savedMessages) setMessages(savedMessages);
+
+        if (savedDocs && savedChunks && savedDocs.length > 0) {
+          setDocuments(savedDocs);
+          setChunks(savedChunks);
+        } else {
+          await bootstrapStarterDocument();
+        }
+      } catch (e) {
+        console.error('Failed to load IndexedDB state:', e);
+        await bootstrapStarterDocument();
+      } finally {
+        isInitialLoadComplete.current = true;
+      }
+    };
+
+    initStorage();
   }, []);
 
-  // Save changes to localStorage
+  // Persist state to IndexedDB on changes
   useEffect(() => {
-    if (documents.length > 0) {
-      localStorage.setItem(STORAGE_KEYS.DOCS, JSON.stringify(documents));
+    if (isInitialLoadComplete.current) {
+      set(STORAGE_KEYS.DOCS, documents);
     }
   }, [documents]);
 
   useEffect(() => {
-    if (chunks.length > 0) {
-      localStorage.setItem(STORAGE_KEYS.CHUNKS, JSON.stringify(chunks));
+    if (isInitialLoadComplete.current) {
+      set(STORAGE_KEYS.CHUNKS, chunks).catch(err => {
+        console.error('Critical storage error (Chunks):', err);
+      });
     }
   }, [chunks]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    if (isInitialLoadComplete.current) {
+      set(STORAGE_KEYS.SETTINGS, settings);
+    }
   }, [settings]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messages));
+    if (isInitialLoadComplete.current) {
+      set(STORAGE_KEYS.MESSAGES, messages);
+    }
   }, [messages]);
 
   /**
@@ -118,18 +167,18 @@ export default function App() {
     setChunks(STARTER_DOCUMENT_CHUNKS);
 
     try {
-      // Generate embeddings in background for starter chunks
       const texts = STARTER_DOCUMENT_CHUNKS.map((c) => c.content);
       const embeddings = await getBatchEmbeddings(texts);
       const embeddedChunks = STARTER_DOCUMENT_CHUNKS.map((c, i) => ({
         ...c,
         embedding: embeddings[i],
       }));
+      
       setChunks(embeddedChunks);
-      localStorage.setItem(STORAGE_KEYS.CHUNKS, JSON.stringify(embeddedChunks));
-      localStorage.setItem(STORAGE_KEYS.DOCS, JSON.stringify([STARTER_DOCUMENT_RECORD]));
+      await set(STORAGE_KEYS.CHUNKS, embeddedChunks);
+      await set(STORAGE_KEYS.DOCS, [STARTER_DOCUMENT_RECORD]);
     } catch (err) {
-      console.warn('Initial starter embeddings computation queued or deferred:', err);
+      console.warn('Initial starter embeddings computation deferred:', err);
     }
   };
 
@@ -168,8 +217,31 @@ export default function App() {
         embedding: embeddings[idx] || [],
       }));
 
-      // Step 4: Index into database
+      // Step 4: Auto-optimize AI Instructions for this specific document
+      setProcessingStep(`Analyzing document nature to optimize AI instructions...`);
+      try {
+        const sampleText = newChunks.slice(0, 5).map(c => c.content).join('\n\n');
+        const suggestRes = await fetch('/api/suggest-instructions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentSample: sampleText })
+        });
+        if (suggestRes.ok) {
+          const { suggestedPrompt } = await suggestRes.json();
+          if (suggestedPrompt) {
+            setSettings(prev => ({
+              ...prev,
+              systemPrompt: suggestedPrompt
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Could not auto-optimize instructions:', err);
+      }
+
+      // Step 5: Index into database
       setProcessingStep(`Indexing into real-time vector database...`);
+      await new Promise(resolve => setTimeout(resolve, 800));
 
       const newDocRecord: DocumentRecord = {
         id: documentId,
@@ -184,12 +256,12 @@ export default function App() {
       setDocuments((prev) => [newDocRecord, ...prev]);
       setChunks((prev) => [...embeddedChunks, ...prev]);
 
-      setProcessingStep('Indexed successfully!');
-      setTimeout(() => {
-        setIsProcessing(false);
-        setProcessingStep('');
-        setActiveTab('documents');
-      }, 1000);
+      setProcessingStep('Indexing successful! Finishing up...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setIsProcessing(false);
+      setProcessingStep('');
+      setActiveTab('documents');
     } catch (error: any) {
       console.error('PDF ingestion pipeline failed:', error);
       alert(`PDF Ingestion Failed: ${error.message || 'Unknown error'}`);
@@ -217,11 +289,13 @@ export default function App() {
       const queryEmbedding = await getQueryEmbedding(query);
 
       // Step 2: Query the in-memory vector index with cosine similarity
+      // respect the document filter if set in the chat UI
       const retrievedChunks = queryVectorIndex(
         queryEmbedding,
         chunks,
         settings.topKRetrieval,
-        settings.minSimilarityThreshold
+        settings.minSimilarityThreshold,
+        chatDocumentFilter
       );
 
       // Format citations for UI pills
@@ -275,14 +349,19 @@ export default function App() {
   };
 
   const handleDeleteDocument = (documentId: string) => {
-    if (confirm('Are you sure you want to delete this document and remove all its vector chunks?')) {
-      const updatedDocs = documents.filter((d) => d.id !== documentId);
-      const updatedChunks = chunks.filter((c) => c.documentId !== documentId);
-      setDocuments(updatedDocs);
-      setChunks(updatedChunks);
-      localStorage.setItem(STORAGE_KEYS.DOCS, JSON.stringify(updatedDocs));
-      localStorage.setItem(STORAGE_KEYS.CHUNKS, JSON.stringify(updatedChunks));
-    }
+    setConfirmation({
+      isOpen: true,
+      title: 'Delete Document?',
+      message: 'Are you sure you want to delete this document? This will permanently remove all associated vector chunks from the memory.',
+      confirmLabel: 'Delete Permanently',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        const updatedDocs = documents.filter((d) => d.id !== documentId);
+        const updatedChunks = chunks.filter((c) => c.documentId !== documentId);
+        setDocuments(updatedDocs);
+        setChunks(updatedChunks);
+      },
+    });
   };
 
   const handleReindexDocument = async (documentId: string) => {
@@ -305,7 +384,6 @@ export default function App() {
       const otherChunks = chunks.filter((c) => c.documentId !== documentId);
       const finalChunks = [...otherChunks, ...reIndexedChunks];
       setChunks(finalChunks);
-      localStorage.setItem(STORAGE_KEYS.CHUNKS, JSON.stringify(finalChunks));
 
       setProcessingStep('Re-indexed successfully!');
       setTimeout(() => {
@@ -325,10 +403,17 @@ export default function App() {
   };
 
   const handleClearChat = () => {
-    if (confirm('Clear entire conversation history?')) {
-      setMessages([]);
-      localStorage.removeItem(STORAGE_KEYS.MESSAGES);
-    }
+    setConfirmation({
+      isOpen: true,
+      title: 'Clear Conversation?',
+      message: 'This will wipe your entire chat history and reset your current session. This action cannot be undone.',
+      confirmLabel: 'Clear History',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        setMessages([]);
+        setChatDocumentFilter(null);
+      },
+    });
   };
 
   const handleHeaderUploadClick = () => {
@@ -376,6 +461,9 @@ export default function App() {
             onSelectCitation={(cit) => setActiveCitation(cit)}
             documentCount={documents.length}
             chunkCount={chunks.length}
+            documents={documents}
+            activeFilter={chatDocumentFilter}
+            onFilterChange={setChatDocumentFilter}
           />
         )}
 
@@ -415,6 +503,23 @@ export default function App() {
       <CitationModal
         citation={activeCitation}
         onClose={() => setActiveCitation(null)}
+      />
+
+      {/* Global AI Ingestion Pipeline Loader */}
+      <ProcessingModal 
+        isOpen={isProcessing} 
+        step={processingStep} 
+      />
+
+      {/* Global Confirmation Dialog */}
+      <ConfirmationModal
+        isOpen={confirmation.isOpen}
+        title={confirmation.title}
+        message={confirmation.message}
+        confirmLabel={confirmation.confirmLabel}
+        confirmVariant={confirmation.confirmVariant}
+        onConfirm={confirmation.onConfirm}
+        onClose={() => setConfirmation(prev => ({ ...prev, isOpen: false }))}
       />
     </div>
   );

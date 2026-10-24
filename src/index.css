@@ -8,3 +8,9 @@
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 }
+
+@keyframes loading {
+  from { background-position: 0 0; }
+  to { background-position: 2rem 0; }
+}
+

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
 const rawKey = process.env.GEMINI_API_KEY || '';
 
@@ -31,44 +31,70 @@ export function normalizeVector(vec: number[]): number[] {
 }
 
 /**
- * Generate embedding for a single text string
+ * Helper to pause execution
+ */
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Standardized retry logic for API calls (Exponential Backoff)
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    const errorStr = `${error?.message || ''} ${JSON.stringify(error || '')}`;
+    const isRateLimit = errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
+    if (retries > 0 && isRateLimit) {
+      console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} attempts left)`);
+      await sleep(delay + Math.random() * 800); // Add jitter
+      return withRetry(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Generate embedding for a single text string using @google/genai SDK
  */
 export async function generateSingleEmbedding(text: string): Promise<number[]> {
+  const cleanText = text.trim();
+  if (!cleanText) return [];
+
   try {
-    const cleanText = text.trim();
-    if (!cleanText) return [];
+    return await withRetry(async () => {
+      const response = await ai.models.embedContent({
+        model: 'gemini-embedding-001',
+        contents: cleanText,
+      });
 
-    const response = await ai.models.embedContent({
-      model: 'gemini-embedding-001',
-      contents: cleanText,
+      const values =
+        (response as any).embeddings?.[0]?.values ||
+        (response as any).embedding?.values ||
+        (response as any).values;
+
+      if (Array.isArray(values) && values.length > 0) {
+        return normalizeVector(values);
+      }
+      throw new Error('No embedding values returned in response');
     });
-
-    const values =
-      (response as any).embedding?.values ||
-      (response as any).embeddings?.[0]?.values ||
-      (Array.isArray((response as any).embeddings) ? (response as any).embeddings[0] : null) ||
-      (response as any).values;
-
-    if (Array.isArray(values) && values.length > 0) {
-      return normalizeVector(values);
-    }
-
-    throw new Error('No embedding values returned in response');
   } catch (error: any) {
     console.error('Error generating embedding with gemini-embedding-001:', error);
     // Fallback: try gemini-embedding-2 if needed
     try {
-      const fbResponse = await ai.models.embedContent({
-        model: 'gemini-embedding-2',
-        contents: text.trim(),
+      return await withRetry(async () => {
+        const fbResponse = await ai.models.embedContent({
+          model: 'gemini-embedding-2',
+          contents: cleanText,
+        });
+        const fbValues =
+          (fbResponse as any).embeddings?.[0]?.values ||
+          (fbResponse as any).embedding?.values ||
+          (fbResponse as any).values;
+        if (Array.isArray(fbValues) && fbValues.length > 0) {
+          return normalizeVector(fbValues);
+        }
+        throw new Error('Fallback failed');
       });
-      const fbValues =
-        (fbResponse as any).embedding?.values ||
-        (fbResponse as any).embeddings?.[0]?.values ||
-        (Array.isArray((fbResponse as any).embeddings) ? (fbResponse as any).embeddings[0] : null);
-      if (Array.isArray(fbValues)) {
-        return normalizeVector(fbValues);
-      }
     } catch (fallbackError) {
       console.error('Fallback embedding also failed:', fallbackError);
     }
@@ -77,18 +103,38 @@ export async function generateSingleEmbedding(text: string): Promise<number[]> {
 }
 
 /**
- * Batch embedding generator for multiple text chunks
+ * Optimized batch embedding generator using native batch API
  */
 export async function generateBatchEmbeddings(texts: string[]): Promise<number[][]> {
   const results: number[][] = [];
-  // Process in small batches of 5 to prevent timeouts or rate limits
-  const BATCH_SIZE = 5;
+  const BATCH_SIZE = 3; // Process in very small chunks to stay strictly within 30k TPM Free Tier limit
 
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const slice = texts.slice(i, i + BATCH_SIZE);
-    const promises = slice.map((t) => generateSingleEmbedding(t));
-    const batchEmbeddings = await Promise.all(promises);
-    results.push(...batchEmbeddings);
+    const slice = texts.slice(i, i + BATCH_SIZE).map((t) => t.trim() || ' ');
+
+    try {
+      const batchEmbeddings = await withRetry(async () => {
+        const response = await ai.models.embedContent({
+          model: 'gemini-embedding-001',
+          contents: slice,
+        });
+
+        const embeddingsList = (response as any).embeddings || [];
+        return embeddingsList.map((e: any) => normalizeVector(e.values || e));
+      });
+
+      results.push(...batchEmbeddings);
+
+      if (i + BATCH_SIZE < texts.length) {
+        await sleep(2500); // Significant pause between small batches to avoid token limit exhaustion
+      }
+    } catch (err) {
+      console.error(`Batch processing failed at index ${i}, falling back to sequential calls:`, err);
+      for (const text of slice) {
+        results.push(await generateSingleEmbedding(text));
+        await sleep(500); // Extra safety for sequential calls
+      }
+    }
   }
 
   return results;
@@ -112,7 +158,7 @@ export interface GenerateRagAnswerParams {
 }
 
 /**
- * Synthesizes grounded answer using gemini-3.8-flash with citation tags
+ * Synthesizes grounded answer using gemma-4-26b-a4b-it (with gemini-2.5-flash fallback) with citation tags
  */
 export async function generateRagAnswer(params: GenerateRagAnswerParams): Promise<{
   answer: string;
@@ -145,9 +191,16 @@ ${query}
 
 Instructions:
 1. Answer the question using ONLY the facts present in the DOCUMENT CONTEXT above.
-2. Whenever you mention information from a source, cite it directly in the text with a citation badge like \`[Source 1: DocName, p. X]\`.
-3. Provide a direct, well-structured, easy-to-read response with clear paragraphs, bullet points, or bold headers where helpful.
-4. If the provided context does not have sufficient information, explain what is missing politely.`;
+2. **Readability is Priority**: Write like a professional human consultant, not a robot. Avoid repeating the same sentence structure or source name constantly.
+3. **Smart Citations**: Do NOT put a citation after every single sentence. 
+   - If a whole paragraph or list section comes from Source 1, just put \`[Source 1: DocName, p. X]\` once at the end of that paragraph or section.
+   - Use citations only where necessary to prove a claim, keeping the text clean.
+4. **Professional Formatting**:
+   - Use **Bold** for emphasis on key results or names.
+   - Use clean **Bullet Points** for lists.
+   - Use **Tables** for structured data (like contact info or dates).
+   - Use **Headers (###)** to organize different sections of your answer.
+5. If the provided context does not have sufficient information, state clearly that it is not in the documents.`;
 
   const contentsPayload: any =
     history && history.length > 0
@@ -176,7 +229,7 @@ Instructions:
     });
     responseText = response.text || '';
   } catch (err: any) {
-    console.warn('Gemma 4 primary call error, attempting fallback:', err);
+    console.warn('Gemma 4 primary call error, attempting fallback to gemini-2.5-flash:', err);
     try {
       const fbResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -198,4 +251,52 @@ Instructions:
     answer,
     citedChunks: contextChunks,
   };
+}
+
+/**
+ * Analyzes document sample and suggests an optimized System Prompt
+ */
+export async function suggestSystemInstruction(documentSample: string): Promise<string> {
+  const prompt = `You are an AI System Architect. I will provide you with a sample text from a document knowledge base.
+Your task is to analyze the nature of this content (is it a technical manual, a legal contract, a medical report, a company policy, etc.?) and write a highly optimized "System Instruction" (System Prompt) for a RAG chatbot.
+
+DOCUMENT SAMPLE:
+"""
+${documentSample.slice(0, 4000)}
+"""
+
+Instructions for you:
+1. Identify the core domain and target audience of the document.
+2. Draft a "System Instruction" (approx 150-250 words) that tells the chatbot:
+   - What its persona should be (e.g., "Senior Legal Auditor", "Friendly Technical Support").
+   - How to handle citations (always [Source: Name, p. X]).
+   - How to structure answers (e.g., tables for comparisons, bullets for steps).
+   - What to do if information is missing (state clearly that it is not available).
+3. The response should ONLY contain the suggested system prompt text, nothing else.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemma-4-26b-a4b-it',
+      contents: prompt,
+      config: {
+        temperature: 0.7,
+      },
+    });
+    return response.text || '';
+  } catch (error) {
+    console.warn('Error suggesting instructions with Gemma 4, attempting fallback to gemini-2.5-flash:', error);
+    try {
+      const fbResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          temperature: 0.7,
+        },
+      });
+      return fbResponse.text || '';
+    } catch (fbErr) {
+      console.error('Fallback suggest instructions also failed:', fbErr);
+      return '';
+    }
+  }
 }

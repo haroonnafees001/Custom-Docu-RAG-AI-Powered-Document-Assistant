@@ -98,7 +98,7 @@ export const DocumentManagerTab: React.FC<DocumentManagerTabProps> = ({
         </div>
       </div>
 
-      {/* Upload Dropzone */}
+      {/* Upload Dropzone / Processing Panel */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -107,11 +107,13 @@ export const DocumentManagerTab: React.FC<DocumentManagerTabProps> = ({
         onDragLeave={() => setIsDragOver(false)}
         onDrop={handleDrop}
         onClick={() => !isProcessing && fileInputRef.current?.click()}
-        className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
+        className={`relative border-2 border-dashed rounded-2xl p-10 text-center transition-all duration-300 shadow-sm ${
           isDragOver
-            ? 'border-blue-500 bg-blue-50/50 scale-[1.005]'
-            : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50/50'
-        } ${isProcessing ? 'pointer-events-none opacity-80' : ''}`}
+            ? 'border-blue-500 bg-blue-50/50 scale-[1.01]'
+            : isProcessing
+            ? 'border-blue-200 bg-slate-50/50 cursor-wait'
+            : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50/30 cursor-pointer'
+        }`}
       >
         <input
           ref={fileInputRef}
@@ -122,33 +124,77 @@ export const DocumentManagerTab: React.FC<DocumentManagerTabProps> = ({
           disabled={isProcessing}
         />
 
-        <div className="max-w-md mx-auto space-y-3">
-          <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-2xs">
-            {isProcessing ? (
-              <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
-            ) : (
-              <FileUp className="w-6 h-6" />
-            )}
-          </div>
-
-          <div>
-            <span className="text-sm font-semibold text-slate-900 block">
-              {isProcessing
-                ? 'Processing & Indexing PDF...'
-                : 'Drop your PDF document here, or browse files'}
-            </span>
-            <span className="text-xs text-slate-500 mt-0.5 block">
-              Supports searchable PDFs up to 25MB with multi-page automatic chunking
-            </span>
-          </div>
-
-          {isProcessing && (
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs font-medium text-blue-800 flex items-center justify-center gap-2">
-              <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              <span>{processingStep || 'Ingesting document...'}</span>
+        {isProcessing ? (
+          <div className="max-w-md mx-auto space-y-6 py-4 animate-in fade-in duration-500">
+            <div className="relative mx-auto w-20 h-20">
+              <div className="absolute inset-0 bg-blue-100 rounded-full animate-ping opacity-40" />
+              <div className="relative z-10 w-20 h-20 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg">
+                <RefreshCw className="w-10 h-10 animate-spin" />
+              </div>
             </div>
-          )}
-        </div>
+
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-slate-900 tracking-tight">
+                AI Knowledge Pipeline Active
+              </h3>
+              <p className="text-sm text-slate-500 max-w-xs mx-auto leading-relaxed">
+                We're turning your document into searchable semantic intelligence.
+              </p>
+            </div>
+
+            <div className="bg-white border border-blue-100 rounded-xl p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
+                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
+                </div>
+                <span className="text-xs font-bold text-blue-700 font-mono uppercase tracking-wider">
+                  Current Status
+                </span>
+              </div>
+              <div className="text-sm font-medium text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-blue-500" />
+                {processingStep || 'Initializing engine...'}
+              </div>
+              
+              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                <div className="bg-blue-600 h-full w-2/3 animate-[loading_2s_ease-in-out_infinite]" style={{
+                  backgroundImage: 'linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent)',
+                  backgroundSize: '1rem 1rem'
+                }} />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-md mx-auto space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-sm group-hover:scale-110 transition-transform duration-300">
+              <FileUp className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-base font-bold text-slate-900 block">
+                Upload knowledge source
+              </span>
+              <p className="text-sm text-slate-500 px-4">
+                Drag your PDF here or <span className="text-blue-600 underline font-medium">browse files</span>
+              </p>
+            </div>
+            
+            <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                Up to 25MB
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                OCR Enabled
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                Semantic Chunking
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Document Inventory Table */}

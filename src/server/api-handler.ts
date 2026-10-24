@@ -124,6 +124,20 @@ export async function handleApiRoute(req: IncomingMessage, res: ServerResponse):
       return true;
     }
 
+    if (url === '/api/suggest-instructions' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const { documentSample } = body;
+      if (!documentSample || typeof documentSample !== 'string') {
+        sendJson(res, 400, { error: 'Missing "documentSample" in request body' });
+        return true;
+      }
+
+      const { suggestSystemInstruction } = await import('./rag-service.ts');
+      const suggestedPrompt = await suggestSystemInstruction(documentSample);
+      sendJson(res, 200, { suggestedPrompt });
+      return true;
+    }
+
     sendJson(res, 404, { error: `Endpoint not found: ${url}` });
     return true;
   } catch (error: any) {

@@ -33,15 +33,21 @@ export function queryVectorIndex(
   queryEmbedding: number[],
   chunks: DocumentChunk[],
   topK = 4,
-  minThreshold = 0.35
+  minThreshold = 0.35,
+  documentIdFilter?: string | null
 ): ScoredChunk[] {
   if (!queryEmbedding || queryEmbedding.length === 0 || chunks.length === 0) {
     return [];
   }
 
+  // Apply document filter if provided
+  const targetChunks = documentIdFilter 
+    ? chunks.filter(c => c.documentId === documentIdFilter)
+    : chunks;
+
   const scored: ScoredChunk[] = [];
 
-  for (const chunk of chunks) {
+  for (const chunk of targetChunks) {
     if (!chunk.embedding || chunk.embedding.length === 0) continue;
     const score = calculateCosineSimilarity(queryEmbedding, chunk.embedding);
     if (score >= minThreshold) {

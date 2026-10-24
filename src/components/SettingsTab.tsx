@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState } from 'react';
 import {
   Sliders,
@@ -11,8 +6,11 @@ import {
   Check,
   Search,
   Zap,
-  Bookmark,
   ShieldCheck,
+  Brain,
+  Eye,
+  Microscope,
+  Info,
 } from 'lucide-react';
 import { SystemSettings, DocumentChunk } from '../types/rag.ts';
 import { DEFAULT_SYSTEM_SETTINGS } from '../data/starter-document.ts';
@@ -26,8 +24,8 @@ interface SettingsTabProps {
 
 const PERSONA_PRESETS = [
   {
-    name: 'Technical Architecture Expert',
-    description: 'Strict technical accuracy with detailed structural citations.',
+    name: 'Technical Expert',
+    description: 'Detailed and accurate, perfect for engineering or technical docs.',
     prompt: `You are the DocuRAG Senior Technical Intelligence Assistant. Your role is to answer user queries with absolute fidelity to the uploaded document context.
 Rules:
 1. Ground every claim strictly in the provided document excerpts.
@@ -38,8 +36,8 @@ Rules:
     topK: 4,
   },
   {
-    name: 'Concise Executive Advisor',
-    description: 'High-level executive takeaways and decision summaries.',
+    name: 'Executive Summary',
+    description: 'Crisp takeaways and decision-ready summaries for busy managers.',
     prompt: `You are an Executive Intelligence Advisor. Synthesize the provided document excerpts into high-impact, actionable business summaries.
 Rules:
 1. Deliver crisp, bulleted insights without technical fluff.
@@ -50,8 +48,8 @@ Rules:
     topK: 3,
   },
   {
-    name: 'Strict Compliance & Legal Auditor',
-    description: 'Extreme adherence to source text with verbatim quotations where applicable.',
+    name: 'Strict Auditor',
+    description: 'Uses exact quotes and never guesses. Best for legal or policy work.',
     prompt: `You are a Strict Legal & Compliance Auditor. Your task is to provide audit-grade answers based solely on the provided document excerpts.
 Rules:
 1. Never extrapolate, extrapolate, or assume facts not explicitly stated in the context.
@@ -61,8 +59,8 @@ Rules:
     topK: 5,
   },
   {
-    name: 'Friendly Customer Support Specialist',
-    description: 'Approachable, warm explanations with easy-to-follow steps.',
+    name: 'Helpful Support',
+    description: 'Friendly, step-by-step guidance that is easy to follow.',
     prompt: `You are a helpful, courteous Customer Support Specialist. Guide the user through solutions clearly and politely based on the documentation.
 Rules:
 1. Maintain a warm, encouraging tone while keeping answers factual.
@@ -86,6 +84,47 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   const [testResults, setTestResults] = useState<ScoredChunk[]>([]);
   const [isTesting, setIsTesting] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+
+  // Manual Instruction Generation state
+  const [isGeneratingInstructions, setIsGeneratingInstructions] = useState(false);
+
+  const handleGenerateAIInstructions = async () => {
+    if (chunks.length === 0 || isGeneratingInstructions) return;
+    setIsGeneratingInstructions(true);
+
+    try {
+      // Pick a diverse sample of content from the indexed chunks
+      const sampleIndices = [0, Math.floor(chunks.length / 2), chunks.length - 1];
+      const uniqueIndices = [...new Set(sampleIndices)];
+      const sampleText = uniqueIndices
+        .map(i => chunks[i]?.content)
+        .filter(Boolean)
+        .join('\n\n');
+
+      const res = await fetch('/api/suggest-instructions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentSample: sampleText })
+      });
+
+      if (res.ok) {
+        const { suggestedPrompt } = await res.json();
+        if (suggestedPrompt) {
+          setFormState(prev => ({
+            ...prev,
+            systemPrompt: suggestedPrompt
+          }));
+        }
+      } else {
+        throw new Error('Server returned an error');
+      }
+    } catch (err) {
+      console.error('Manual instruction generation failed:', err);
+      alert('Could not generate instructions. Please try again.');
+    } finally {
+      setIsGeneratingInstructions(false);
+    }
+  };
 
   const handleApplyPreset = (preset: (typeof PERSONA_PRESETS)[0]) => {
     setFormState((prev) => ({
@@ -126,7 +165,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       );
       setTestResults(results);
     } catch (err: any) {
-      setTestError(err.message || 'Retrieval test failed');
+      setTestError(err.message || 'Search test failed');
     } finally {
       setIsTesting(false);
     }
@@ -137,11 +176,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">
-            System Persona & RAG Configuration
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-blue-600" />
+            AI Personality & Logic Settings
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Customize the system instruction prompt, retrieval top-k parameters, cosine similarity thresholds, and test retrieval in real time.
+            Choose how the AI should talk, how much it should "read" before answering, and how creative it should be.
           </p>
         </div>
 
@@ -165,61 +205,91 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Form Settings (2 cols) */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-8">
           {/* Persona Presets */}
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-2">
-              Persona Presets
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <section>
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-purple-500" />
+              <h2 className="text-sm font-bold text-slate-800">Quick Personality Styles</h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {PERSONA_PRESETS.map((preset, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => handleApplyPreset(preset)}
-                  className="p-3 text-left bg-white border border-slate-200 hover:border-blue-400 rounded-lg transition-colors shadow-2xs group"
+                  className="p-3 text-left bg-white border border-slate-200 hover:border-blue-400 rounded-xl transition-all shadow-sm hover:shadow-md group relative overflow-hidden"
                 >
-                  <span className="font-semibold text-xs text-slate-900 group-hover:text-blue-700 block">
-                    {preset.name}
-                  </span>
-                  <span className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
-                    {preset.description}
-                  </span>
+                  <div className="relative z-10">
+                    <span className="font-bold text-xs text-slate-900 group-hover:text-blue-700 block">
+                      {preset.name}
+                    </span>
+                    <span className="text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-relaxed">
+                      {preset.description}
+                    </span>
+                  </div>
+                  <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-10 transition-opacity">
+                    <Zap className="w-8 h-8 text-blue-600" />
+                  </div>
                 </button>
               ))}
             </div>
-          </div>
+          </section>
 
           {/* System Prompt */}
-          <div>
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 block mb-1">
-              Active System Persona Instruction
-            </label>
-            <p className="text-[11px] text-slate-500 mb-2">
-              Dictates the tone, grounding boundaries, and citation formatting enforced across all responses.
-            </p>
-            <textarea
-              rows={7}
-              value={formState.systemPrompt}
-              onChange={(e) =>
-                setFormState((prev) => ({ ...prev, systemPrompt: e.target.value }))
-              }
-              className="w-full text-xs font-mono p-3 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:border-blue-500 focus:ring-1 focus:ring-blue-500 leading-relaxed"
-            />
-          </div>
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-rose-500" />
+                <h2 className="text-sm font-bold text-slate-800">Instructions for the AI</h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateAIInstructions}
+                disabled={chunks.length === 0 || isGeneratingInstructions}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:active:scale-100"
+              >
+                {isGeneratingInstructions ? (
+                  <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                <span>{isGeneratingInstructions ? 'Generating...' : 'Generate with AI'}</span>
+              </button>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <p className="text-[11px] text-slate-600 mb-3 flex items-start gap-1.5">
+                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-blue-500" />
+                These instructions tell the AI how to behave. You can change them to make the AI more polite, formal, or brief.
+              </p>
+              <textarea
+                rows={6}
+                value={formState.systemPrompt}
+                onChange={(e) =>
+                  setFormState((prev) => ({ ...prev, systemPrompt: e.target.value }))
+                }
+                className="w-full text-xs font-mono p-4 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-hidden focus:border-blue-500 focus:ring-2 focus:ring-blue-100 leading-relaxed shadow-inner"
+                placeholder="Write how you want the AI to behave..."
+              />
+            </div>
+          </section>
 
           {/* Sliders Grid */}
-          <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700">
-              Retrieval & Model Parameters
-            </h3>
+          <section className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-6">
+            <div className="flex items-center gap-2">
+              <Microscope className="w-4 h-4 text-emerald-500" />
+              <h2 className="text-sm font-bold text-slate-800">Advanced Logic Control</h2>
+            </div>
 
             {/* Top-K Retrieval */}
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-medium text-slate-700">Top-K Retrieval Candidates</span>
-                <span className="font-mono text-blue-600 font-semibold tabular-nums">
-                  {formState.topKRetrieval} chunks
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-xs font-bold text-slate-700 block">Source Reading Depth</span>
+                  <span className="text-[10px] text-slate-400">How many different parts of the document should the AI check?</span>
+                </div>
+                <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-md font-mono text-xs font-bold">
+                  {formState.topKRetrieval} sources
                 </span>
               </div>
               <input
@@ -234,20 +304,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     topKRetrieval: parseInt(e.target.value, 10),
                   }))
                 }
-                className="w-full accent-blue-600 cursor-pointer"
+                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
               />
-              <span className="text-[11px] text-slate-400 block mt-0.5">
-                Maximum number of semantically closest chunks passed to Gemini.
-              </span>
             </div>
 
             {/* Minimum Similarity Threshold */}
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-medium text-slate-700">Minimum Cosine Similarity</span>
-                <span className="font-mono text-blue-600 font-semibold tabular-nums">
-                  {Math.round(formState.minSimilarityThreshold * 100)}% (
-                  {formState.minSimilarityThreshold.toFixed(2)})
+            <div className="space-y-3 pt-2 border-t border-slate-50">
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-xs font-bold text-slate-700 block">Strictness of Matches</span>
+                  <span className="text-[10px] text-slate-400">How closely must the document match the question to be included?</span>
+                </div>
+                <span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-md font-mono text-xs font-bold">
+                  {Math.round(formState.minSimilarityThreshold * 100)}% Match
                 </span>
               </div>
               <input
@@ -262,18 +331,18 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     minSimilarityThreshold: parseFloat(e.target.value),
                   }))
                 }
-                className="w-full accent-blue-600 cursor-pointer"
+                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-500"
               />
-              <span className="text-[11px] text-slate-400 block mt-0.5">
-                Chunks scoring below this threshold are omitted to reduce noise.
-              </span>
             </div>
 
             {/* Model Temperature */}
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span className="font-medium text-slate-700">Model Temperature</span>
-                <span className="font-mono text-blue-600 font-semibold tabular-nums">
+            <div className="space-y-3 pt-2 border-t border-slate-50">
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-xs font-bold text-slate-700 block">Creativity & Style</span>
+                  <span className="text-[10px] text-slate-400">Low is factual/robotic, High is creative/conversational.</span>
+                </div>
+                <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded-md font-mono text-xs font-bold">
                   {formState.temperature.toFixed(2)}
                 </span>
               </div>
@@ -289,101 +358,102 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     temperature: parseFloat(e.target.value),
                   }))
                 }
-                className="w-full accent-blue-600 cursor-pointer"
+                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-purple-500"
               />
-              <span className="text-[11px] text-slate-400 block mt-0.5">
-                Lower values (0.0 - 0.3) provide strict, deterministic factual responses.
-              </span>
             </div>
-          </div>
+          </section>
         </div>
 
         {/* Right Column: Live Retrieval Sandbox & Architecture Info */}
         <div className="space-y-6">
           {/* Model Specification Card */}
-          <div className="p-4 bg-slate-900 text-white rounded-xl space-y-3 text-xs border border-slate-800">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span className="font-semibold text-slate-200">
+          <div className="p-5 bg-slate-900 text-white rounded-2xl space-y-4 shadow-xl border border-slate-800 relative overflow-hidden">
+            <div className="absolute -top-4 -right-4 w-20 h-20 bg-blue-500/10 blur-3xl rounded-full" />
+            <div className="flex items-center gap-2 relative z-10">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              <span className="font-bold text-sm tracking-tight">
                 Engine Specifications
               </span>
             </div>
-            <div className="space-y-1.5 text-slate-300 font-mono text-[11px]">
-              <div>
-                <span className="text-slate-500">LLM:</span> Gemma 4 (gemma-4-26b-a4b-it)
+            <div className="space-y-2.5 text-slate-300 font-mono text-[11px] relative z-10">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Main AI Model:</span> 
+                <span className="text-white">Gemma 4</span>
               </div>
-              <div>
-                <span className="text-slate-500">Embeddings:</span> gemini-embedding-001 (Stable GA)
+              <div className="flex justify-between">
+                <span className="text-slate-500">Reading Engine:</span>
+                <span className="text-white">Stable GA (001)</span>
               </div>
-              <div>
-                <span className="text-slate-500">Distance:</span> Cosine (L2 Normalized)
+              <div className="flex justify-between">
+                <span className="text-slate-500">Knowledge Depth:</span>
+                <span className="text-white">3,072 Dims</span>
               </div>
-              <div>
-                <span className="text-slate-500">Total Indexed:</span>{' '}
-                <span className="text-blue-400 tabular-nums">
-                  {chunks.length} chunks
+              <div className="pt-2 flex justify-between border-t border-slate-800">
+                <span className="text-slate-500">Total Memories:</span>{' '}
+                <span className="text-blue-400 font-bold tabular-nums">
+                  {chunks.length} snippets
                 </span>
               </div>
             </div>
           </div>
 
           {/* Live Retrieval Tester */}
-          <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
-              <Zap className="w-4 h-4 text-amber-500" />
-              <span>Real-Time Retrieval Sandbox</span>
+          <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
+              <Eye className="w-4 h-4 text-amber-500" />
+              <span>Search Simulation</span>
             </div>
-            <p className="text-[11px] text-slate-500">
-              Test semantic matching live against your active vector store before querying the chatbot.
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Test how well the AI "finds" information in your documents based on your current settings.
             </p>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <input
                 type="text"
                 value={testQuery}
                 onChange={(e) => setTestQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleRunRetrievalTest()}
-                placeholder="Type a test phrase (e.g. overlap)..."
-                className="w-full text-xs p-2 bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:border-blue-500"
+                placeholder="Type something to find..."
+                className="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-100 transition-all placeholder:text-slate-400"
               />
               <button
                 type="button"
                 onClick={handleRunRetrievalTest}
                 disabled={!testQuery.trim() || isTesting}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl transition-all shadow-sm active:scale-95"
               >
                 {isTesting ? (
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  <Search className="w-3.5 h-3.5" />
+                  <Search className="w-4 h-4" />
                 )}
-                <span>{isTesting ? 'Computing...' : 'Test Similarity Match'}</span>
+                <span>{isTesting ? 'Searching...' : 'Run Test Search'}</span>
               </button>
             </div>
 
             {testError && (
-              <div className="text-[11px] text-rose-600 p-2 bg-rose-50 rounded-md">
+              <div className="text-[11px] text-rose-600 p-3 bg-rose-50 rounded-xl border border-rose-100">
                 {testError}
               </div>
             )}
 
             {testResults.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                <span className="text-[11px] font-semibold text-slate-600 block">
-                  Matched Top Candidates ({testResults.length}):
+              <div className="space-y-3 pt-3 border-t border-slate-100">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Top {testResults.length} Matches Found:
                 </span>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
                   {testResults.map((result, idx) => (
                     <div
                       key={idx}
-                      className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-[11px] space-y-1"
+                      className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] space-y-1.5 hover:border-blue-200 transition-colors"
                     >
                       <div className="flex items-center justify-between font-mono">
-                        <span className="text-slate-600 truncate max-w-[150px]">
-                          p. {result.pageNumber} · #{result.chunkIndex}
+                        <span className="text-slate-500 font-bold">
+                          Page {result.pageNumber}
                         </span>
-                        <span className="font-semibold text-blue-700 tabular-nums">
-                          {Math.round(result.score * 100)}% match
+                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[9px] font-bold">
+                          {Math.round(result.score * 100)}% Match
                         </span>
                       </div>
                       <p className="text-slate-700 line-clamp-3 leading-relaxed">
@@ -400,3 +470,4 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     </div>
   );
 };
+
