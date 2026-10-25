@@ -12,6 +12,7 @@ export interface DocumentRecord {
   status: 'parsing' | 'indexing' | 'ready' | 'error';
   errorMessage?: string;
   chunkCount: number;
+  systemPrompt?: string;
 }
 
 export interface DocumentChunk {
