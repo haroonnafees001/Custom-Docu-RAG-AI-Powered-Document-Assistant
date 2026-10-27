@@ -60,6 +60,7 @@ export default function App() {
   const [isAnswering, setIsAnswering] = useState(false);
   const [selectedDocFilter, setSelectedDocFilter] = useState<string | null>(null);
   const [chatDocumentFilter, setChatDocumentFilter] = useState<string | null>(null);
+  const globalPromptRef = useRef<string>(DEFAULT_SYSTEM_SETTINGS.systemPrompt);
 
   // Confirmation Modal State
   const [confirmation, setConfirmation] = useState<{
@@ -112,7 +113,10 @@ export default function App() {
           get(STORAGE_KEYS.MESSAGES),
         ]);
 
-        if (savedSettings) setSettings(savedSettings);
+        if (savedSettings) {
+          setSettings(savedSettings);
+          globalPromptRef.current = savedSettings.systemPrompt || DEFAULT_SYSTEM_SETTINGS.systemPrompt;
+        }
         if (savedMessages) setMessages(savedMessages);
 
         if (savedDocs && savedChunks && savedDocs.length > 0) {
@@ -219,6 +223,7 @@ export default function App() {
 
       // Step 4: Auto-optimize AI Instructions for this specific document
       setProcessingStep(`Analyzing document nature to optimize AI instructions...`);
+      let documentPrompt = '';
       try {
         const sampleText = newChunks.slice(0, 5).map(c => c.content).join('\n\n');
         const suggestRes = await fetch('/api/suggest-instructions', {
@@ -229,14 +234,22 @@ export default function App() {
         if (suggestRes.ok) {
           const { suggestedPrompt } = await suggestRes.json();
           if (suggestedPrompt) {
-            setSettings(prev => ({
-              ...prev,
-              systemPrompt: suggestedPrompt
-            }));
+            documentPrompt = suggestedPrompt;
           }
         }
       } catch (err) {
         console.warn('Could not auto-optimize instructions:', err);
+      }
+
+      if (!documentPrompt) {
+        documentPrompt = `You are a specialized AI assistant dedicated exclusively to the document "${file.name}".
+Your task is to analyze and answer questions using only the provided excerpts from "${file.name}".
+
+Key Instructions:
+1. Provide accurate, in-depth responses grounded directly in "${file.name}".
+2. Cite all facts with [Source: ${file.name}, p. X].
+3. Maintain high clarity, formatting answers with clear structure, bold key terms, and concise points.
+4. If the question cannot be answered from the content of "${file.name}", explicitly state that the document does not contain this information.`;
       }
 
       // Step 5: Index into database
@@ -251,6 +264,7 @@ export default function App() {
         uploadedAt: new Date().toISOString(),
         status: 'ready',
         chunkCount: embeddedChunks.length,
+        systemPrompt: documentPrompt,
       };
 
       setDocuments((prev) => [newDocRecord, ...prev]);
@@ -402,6 +416,62 @@ export default function App() {
     setActiveTab('inspector');
   };
 
+  const getDefaultDocPrompt = (doc: DocumentRecord): string => {
+    if (doc.systemPrompt && doc.systemPrompt.trim()) {
+      return doc.systemPrompt.trim();
+    }
+    return `You are a specialized AI assistant dedicated exclusively to the document "${doc.name}".
+Your task is to analyze and answer questions using only the provided excerpts from "${doc.name}".
+
+Key Instructions:
+1. Provide accurate, in-depth responses grounded directly in "${doc.name}".
+2. Cite all facts with [Source: ${doc.name}, p. X].
+3. Maintain high clarity, formatting answers with clear structure, bold key terms, and concise points.
+4. If the question cannot be answered from the content of "${doc.name}", explicitly state that the document does not contain this information.`;
+  };
+
+  const handleFilterChange = (docId: string | null) => {
+    setChatDocumentFilter(docId);
+
+    if (!docId) {
+      // Revert back to global multi-doc prompt
+      setSettings((prev) => ({
+        ...prev,
+        systemPrompt: globalPromptRef.current || DEFAULT_SYSTEM_SETTINGS.systemPrompt,
+      }));
+    } else {
+      // If currently in global mode, snapshot current systemPrompt as global
+      if (!chatDocumentFilter) {
+        globalPromptRef.current = settings.systemPrompt;
+      }
+      const targetDoc = documents.find((d) => d.id === docId);
+      if (targetDoc) {
+        const tailoredPrompt = getDefaultDocPrompt(targetDoc);
+        if (!targetDoc.systemPrompt) {
+          setDocuments((prev) =>
+            prev.map((d) => (d.id === docId ? { ...d, systemPrompt: tailoredPrompt } : d))
+          );
+        }
+        setSettings((prev) => ({
+          ...prev,
+          systemPrompt: tailoredPrompt,
+        }));
+      }
+    }
+  };
+
+  const handleUpdateCurrentPrompt = (newPrompt: string) => {
+    setSettings((prev) => ({ ...prev, systemPrompt: newPrompt }));
+    if (!chatDocumentFilter) {
+      globalPromptRef.current = newPrompt;
+    } else {
+      // Save directly to active document record for persistence
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === chatDocumentFilter ? { ...d, systemPrompt: newPrompt } : d))
+      );
+    }
+  };
+
   const handleClearChat = () => {
     setConfirmation({
       isOpen: true,
@@ -412,6 +482,10 @@ export default function App() {
       onConfirm: () => {
         setMessages([]);
         setChatDocumentFilter(null);
+        setSettings((prev) => ({
+          ...prev,
+          systemPrompt: globalPromptRef.current || DEFAULT_SYSTEM_SETTINGS.systemPrompt,
+        }));
       },
     });
   };
@@ -463,7 +537,10 @@ export default function App() {
             chunkCount={chunks.length}
             documents={documents}
             activeFilter={chatDocumentFilter}
-            onFilterChange={setChatDocumentFilter}
+            onFilterChange={handleFilterChange}
+            currentSystemPrompt={settings.systemPrompt}
+            onUpdatePrompt={handleUpdateCurrentPrompt}
+            activeDocument={documents.find((d) => d.id === chatDocumentFilter) || null}
           />
         )}
 
@@ -484,7 +561,18 @@ export default function App() {
         {activeTab === 'settings' && (
           <SettingsTab
             settings={settings}
-            onSaveSettings={(s) => setSettings(s)}
+            onSaveSettings={(s) => {
+              setSettings(s);
+              if (!chatDocumentFilter) {
+                globalPromptRef.current = s.systemPrompt;
+              } else {
+                setDocuments((prev) =>
+                  prev.map((d) =>
+                    d.id === chatDocumentFilter ? { ...d, systemPrompt: s.systemPrompt } : d
+                  )
+                );
+              }
+            }}
             chunks={chunks}
           />
         )}

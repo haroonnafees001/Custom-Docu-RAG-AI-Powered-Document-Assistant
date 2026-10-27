@@ -6,7 +6,23 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Send, Sparkles, Trash2, Bookmark, AlertCircle, FileText, Bot, User, Filter, ChevronDown, Check } from 'lucide-react';
+import {
+  Send,
+  Sparkles,
+  Trash2,
+  Bookmark,
+  AlertCircle,
+  FileText,
+  Bot,
+  User,
+  Filter,
+  ChevronDown,
+  Check,
+  Sliders,
+  X,
+  RefreshCw,
+  Info,
+} from 'lucide-react';
 import { ChatMessage, CitationItem, DocumentRecord } from '../types/rag.ts';
 
 interface ChatTabProps {
@@ -20,6 +36,9 @@ interface ChatTabProps {
   documents: DocumentRecord[];
   activeFilter: string | null;
   onFilterChange: (docId: string | null) => void;
+  currentSystemPrompt?: string;
+  onUpdatePrompt?: (newPrompt: string) => void;
+  activeDocument?: DocumentRecord | null;
 }
 
 const SAMPLE_QUESTIONS = [
@@ -40,15 +59,49 @@ export const ChatTab: React.FC<ChatTabProps> = ({
   documents,
   activeFilter,
   onFilterChange,
+  currentSystemPrompt = '',
+  onUpdatePrompt,
+  activeDocument,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+  const [promptTextDraft, setPromptTextDraft] = useState(currentSystemPrompt);
+  const [promptFeedback, setPromptFeedback] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sync draft when external prompt changes
+  useEffect(() => {
+    setPromptTextDraft(currentSystemPrompt);
+  }, [currentSystemPrompt]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  const handleSelectFilter = (docId: string | null) => {
+    setIsFilterOpen(false);
+    onFilterChange(docId);
+    if (docId) {
+      const doc = documents.find((d) => d.id === docId);
+      setPromptFeedback(`AI system instructions adjusted for: ${doc?.name || 'Selected Document'}`);
+    } else {
+      setPromptFeedback('Restored global multi-document system instructions.');
+    }
+    setTimeout(() => {
+      setPromptFeedback(null);
+    }, 4500);
+  };
+
+  const handleSavePrompt = () => {
+    if (onUpdatePrompt) {
+      onUpdatePrompt(promptTextDraft);
+    }
+    setIsPromptModalOpen(false);
+    setPromptFeedback('AI instructions updated successfully!');
+    setTimeout(() => setPromptFeedback(null), 3000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,10 +130,10 @@ export const ChatTab: React.FC<ChatTabProps> = ({
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] max-w-5xl mx-auto px-4 sm:px-6 py-4">
       {/* Top status & toolbar */}
-      <div className="flex items-center justify-between pb-3 mb-2 border-b border-slate-200 text-xs">
-        <div className="flex items-center gap-4 flex-1 min-w-0">
+      <div className="flex items-center justify-between pb-3 mb-2 border-b border-slate-200 text-xs gap-2">
+        <div className="flex items-center gap-3 flex-1 min-w-0 flex-wrap">
           <div className="flex items-center gap-2 text-slate-500 shrink-0">
-            <span className="font-medium text-slate-700">Knowledge State:</span>
+            <span className="font-medium text-slate-700">Knowledge:</span>
             <span className="hidden sm:inline">{documentCount} docs</span>
             <span className="hidden sm:inline" aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{chunkCount} chunks</span>
@@ -90,16 +143,17 @@ export const ChatTab: React.FC<ChatTabProps> = ({
           <div className="relative">
             <button
               onClick={() => setIsFilterOpen(!isFilterOpen)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all truncate max-w-[200px] sm:max-w-[300px] ${
-                activeFilter 
-                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-bold' 
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all truncate max-w-[180px] sm:max-w-[240px] ${
+                activeFilter
+                  ? 'bg-blue-50 border-blue-200 text-blue-700 font-bold shadow-xs'
                   : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
               }`}
+              title="Select knowledge base to automatically adjust RAG scope and AI prompt instructions"
             >
               <Filter className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">
-                {activeFilter 
-                  ? documents.find(d => d.id === activeFilter)?.name || 'Filtered' 
+                {activeFilter
+                  ? documents.find((d) => d.id === activeFilter)?.name || 'Filtered Doc'
                   : 'Search All Documents'}
               </span>
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isFilterOpen ? 'rotate-180' : ''}`} />
@@ -108,31 +162,41 @@ export const ChatTab: React.FC<ChatTabProps> = ({
             {isFilterOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setIsFilterOpen(false)} />
-                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 py-1 animate-in fade-in zoom-in-95 duration-200">
-                  <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Target Knowledge Base
+                <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-20 py-1 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="px-3 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Target Knowledge Base</span>
+                    <span className="text-[9px] text-blue-600 font-normal">Auto-adjusts prompt</span>
                   </div>
                   <button
-                    onClick={() => { onFilterChange(null); setIsFilterOpen(false); }}
+                    onClick={() => handleSelectFilter(null)}
                     className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 transition-colors"
                   >
-                    <span className={!activeFilter ? 'font-bold text-blue-600' : 'text-slate-700'}>
-                      Search All Documents
-                    </span>
+                    <div>
+                      <div className={!activeFilter ? 'font-bold text-blue-600' : 'text-slate-700 font-medium'}>
+                        Search All Documents
+                      </div>
+                      <div className="text-[10px] text-slate-400">Default global multi-doc prompt</div>
+                    </div>
                     {!activeFilter && <Check className="w-3.5 h-3.5 text-blue-600" />}
                   </button>
                   <div className="h-px bg-slate-100 my-1" />
                   <div className="max-h-60 overflow-y-auto">
-                    {documents.map(doc => (
+                    {documents.map((doc) => (
                       <button
                         key={doc.id}
-                        onClick={() => { onFilterChange(doc.id); setIsFilterOpen(false); }}
+                        onClick={() => handleSelectFilter(doc.id)}
                         className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-slate-50 transition-colors"
                       >
-                        <span className={`truncate mr-2 ${activeFilter === doc.id ? 'font-bold text-blue-600' : 'text-slate-700'}`}>
-                          {doc.name}
-                        </span>
-                        {activeFilter === doc.id && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        <div className="min-w-0 pr-2">
+                          <div className={`truncate ${activeFilter === doc.id ? 'font-bold text-blue-600' : 'text-slate-700 font-medium'}`}>
+                            {doc.name}
+                          </div>
+                          <div className="text-[10px] text-blue-600 flex items-center gap-1">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            <span>Tailored prompt instruction</span>
+                          </div>
+                        </div>
+                        {activeFilter === doc.id && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
                       </button>
                     ))}
                   </div>
@@ -140,6 +204,30 @@ export const ChatTab: React.FC<ChatTabProps> = ({
               </>
             )}
           </div>
+
+          {/* Prompt Instruction Badge / Trigger */}
+          <button
+            onClick={() => setIsPromptModalOpen(true)}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
+              activeDocument
+                ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+            }`}
+            title="Inspect or tweak the active AI system instruction for this knowledge base"
+          >
+            <Sliders className="w-3 h-3 text-amber-600 shrink-0" />
+            <span className="hidden sm:inline">
+              {activeDocument ? `Prompt: ${activeDocument.name}` : 'Prompt: Global System'}
+            </span>
+            <span className="sm:hidden">Prompt</span>
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                activeDocument ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-700'
+              }`}
+            >
+              Adjusted
+            </span>
+          </button>
         </div>
 
         {messages.length > 0 && (
@@ -152,6 +240,22 @@ export const ChatTab: React.FC<ChatTabProps> = ({
           </button>
         )}
       </div>
+
+      {/* Dynamic Prompt Instruction Feedback Banner */}
+      {promptFeedback && (
+        <div className="mb-3 px-3.5 py-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs flex items-center justify-between shadow-2xs animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-blue-600 shrink-0" />
+            <span className="font-medium">{promptFeedback}</span>
+          </div>
+          <button
+            onClick={() => setIsPromptModalOpen(true)}
+            className="text-[11px] font-semibold text-blue-700 hover:text-blue-900 underline ml-2 cursor-pointer"
+          >
+            View / Edit Prompt
+          </button>
+        </div>
+      )}
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
@@ -324,6 +428,83 @@ export const ChatTab: React.FC<ChatTabProps> = ({
           </button>
         </div>
       </form>
+
+      {/* System Prompt Customization & Inspection Modal */}
+      {isPromptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-6 space-y-4">
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-base font-bold text-slate-900">
+                    {activeDocument
+                      ? `AI Instruction for: ${activeDocument.name}`
+                      : 'Global Multi-Document Instruction'}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {activeDocument
+                    ? 'Target knowledge base selected. Gemini answers queries strictly following this document-specific instruction.'
+                    : 'Active across all indexed documents in the general knowledge base.'}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsPromptModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  Active System Prompt
+                </label>
+                <span className="text-[11px] font-mono text-slate-400">
+                  {promptTextDraft.length} characters
+                </span>
+              </div>
+              <textarea
+                value={promptTextDraft}
+                onChange={(e) => setPromptTextDraft(e.target.value)}
+                rows={9}
+                className="w-full text-xs font-mono bg-slate-50 border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl p-3 leading-relaxed text-slate-800 resize-none outline-hidden"
+                placeholder="Enter tailored prompt instruction..."
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                <Info className="w-3.5 h-3.5 text-blue-500" />
+                <span>
+                  {activeDocument
+                    ? 'Edits are saved directly for this knowledge base'
+                    : 'Edits apply globally to all documents'}
+                </span>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPromptModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavePrompt}
+                  className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-xs transition-colors cursor-pointer"
+                >
+                  Save & Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
